@@ -9,6 +9,8 @@
 
 #include <OneWire.h>
 
+#define APMODE true
+
 #define RELAY 17
 #define RELAY2 18
 #define TEMP 16
@@ -18,6 +20,8 @@ uint8_t sensor2ID[8] = {0x28, 0xFF, 0x64, 0x1F, 0x78, 0x68, 0xB1, 0x6E};
 
 OneWire oneWire(TEMP);
 DallasTemperature sensorLine(&oneWire);
+
+bool debug = true;
 
 
 
@@ -144,6 +148,10 @@ class System {
     //TODO: maybe throw out integral on large errors?
     
     float output = this->settings.Kp * porportional + Kd * derivative + this->settings.Ki * this->integral;
+    if(debug) {
+      Serial.printf("porportional: %.4f, derivative: %.4f, integral: %.4f\n", porportional, derivative, integral);
+      Serial.printf("Kp*porportional: %.4f + Kd*derivative: %.4f + Ki*integral: %.4f\noutput = %.4f\n", this->settings.Kp * porportional, Kd * derivative, this->settings.Ki * this->integral, output);
+    }
     return output;
   }
 
@@ -181,6 +189,7 @@ class System {
 
     previousError = error;
     previousTime = curtime;
+
   }
 
   bool outputToBin(float output) {
@@ -216,6 +225,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 
+
 // TODO: add the site processor after all has been fixed
 
 
@@ -236,7 +246,12 @@ Settings heatingsettings = {
 
 
 SemaphoreHandle_t sensorLineMutex;
+TemperatureSensor sensor1(sensor1ID, &sensorLine, &sensorLineMutex);
+System system1(&heatingsettings, &sensor1);
 
+TemperatureSensor sensor2(sensor2ID, &sensorLine, &sensorLineMutex);
+System system2(&heatingsettings, &sensor2);
+  
 void setup() {
   Serial.begin(9600);
   Serial.println("started");
@@ -245,20 +260,196 @@ void setup() {
 
   sensorLineMutex = xSemaphoreCreateMutex();
 
-  TemperatureSensor sensor1(sensor1ID, &sensorLine, &sensorLineMutex);
-  System system1(&heatingsettings, &sensor1);
-  
+
   pinMode(RELAY, OUTPUT);
 
-  WiFi.begin(ssids[0], passwords[0]);
+  if (!APMODE){ // Normal mode, connected to wifi
+    WiFi.begin(ssids[0], passwords[0]);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+
+    Serial.print("\nWiFi connected.\nIP address: ");
+    Serial.println(WiFi.localIP());
+  } else { // when no wifi available
+    WiFi.softAP("5g-tower", "typpalingur");
+    delay(10000);
+    Serial.println(WiFi.localIP());
   }
 
-  Serial.print("\nWiFi connected.\nIP address: ");
-  Serial.println(WiFi.localIP());
+  webServerSetup();
+}
+
+String webProcessor(const String& var) {
+  float sys1temp = system1.sensor->getTemperature();
+  float sys2temp = system2.sensor->getTemperature();
+
+
+  char site[] = R"rawliteral(
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Temperature controller</title>
+    </head>
+    <body>
+    {{content}}
+    </body>
+</html>
+  )rawliteral";
+
+  String ret(site);
+  String content = "";
+
+  if (var == "PAGEPLACEHOLDER") {
+    char site[] = R"rawliteral(
+<nav>
+  <a href="/">Home</a>
+  <a href="/settings">Settings</a>
+  <a href="/extrasettings">Extra settings</a>
+  <a href="/reboot">Reboot</a>
+</nav>
+<h2>System 1</h2>
+<p>Target temperature is %f</p>
+<p>Temperature: %f </p>
+<p>Relay is currently %d</p>
+<br>
+<h2>System 2</h2>
+<p>Target temperature is %f</p>
+<p>Temperature: %f </p>
+<p>Relay is currently %d</p>
+    )rawliteral";
+
+    char buf[2048]={};
+
+    int n = sprintf(buf, site, system1.settings.target_temp, sys1temp, system1.relayState, system2.settings.target_temp, sys2temp, system2.relayState);
+
+    content += buf;
+  } else if (var == "METRICSPLACEHOLDER") {
+    char text[] = R"rawliteral(
+# HELP sys1_temperature_celcius Current measured temperature in system 1
+# TYPE sys1_temperature_celcius gauge
+sys1_temperature_celcius %.5f
+
+# HELP sys1_relay_status Current status of relay in system 1
+# TYPE sys1_relay_status gauge
+sys1_relay_status %s
+
+# HELP sys1_target_temperature Current target temperature in system 1
+# TYPE sys1_target_temperature gauge
+sys1_target_temperature %.2f
+
+# HELP sys2_temperature_celcius Current measured temperature in system 2
+# TYPE sys2_temperature_celcius gauge
+sys2_temperature_celcius %.5f
+
+# HELP sys2_relay_status Current status of relay in system 2
+# TYPE sys2_relay_status gauge
+sys2_relay_status %s
+
+# HELP sys2_target_temperature Current target temperature in system 1
+# TYPE sys2_target_temperature gauge
+sys2_target_temperature %.2f
+    )rawliteral";
+    char buf[2048] = {};
+    int n = sprintf(buf, text, sys1temp, system1.relayState, system1.settings.target_temp, sys2temp, system2.relayState, system2.settings.target_temp);
+
+    ret += buf;
+  } else if (var == "SETVARS") {
+    char site[] = R"rawliteral(
+       <form action="/set-variables">
+        <input type="radio" id="sys1" name="system" value="sys1">
+        <label for="sys1">System 1</label><br>
+        <input type="radio" id="sys2" name="system" value="sys2">
+        <label for="sys2">System 2</label><br>
+
+        <label for="target">Target temperature:</label><br>
+        <input type="text" id="target" name="target" value="67"><br>
+
+        <input type="submit" value="Submit">
+      </form> 
+    )rawliteral";
+    char buf[2048] = {};
+    int n = sprintf(buf, site);
+    ret += buf;
+  } else if (var == "EXTRASETVARS") {
+
+ char site[] = R"rawliteral(
+       <form action="/set-variables">
+        <input type="radio" id="sys1" name="system" value="sys1">
+        <label for="sys1">System 1</label><br>
+        <input type="radio" id="sys2" name="system" value="sys2">
+        <label for="sys2">System 2</label><br>
+
+        <label for="target">Target temperature:</label><br>
+        <input type="text" id="target" name="target" value="%d"><br>
+
+        <label for="heating">Heating (0/1):</label><br>
+        <input type="text" id="heating" name="heating" value="%d"><br>
+
+        <label for="Kp">Porportional modifier</label><br>
+        <input type="text" id="Kp" name="Kp" value="%f"><br><br>
+
+        <label for="Kdheating">Heating derivative modifier</label><br>
+        <input type="text" id="Kdheating" name="Kdheating" value="%f"><br><br>
+
+        <label for=Kdcooling">Cooling derivative modifier</label><br>
+        <input type="text" id=Kdcooling" name=Kdcooling" value="%f"><br><br>
+
+        <label for="Ki">Integral modifier</label><br>
+        <input type="text" id="Ki" name="Ki" value="%f"><br><br>
+
+        <input type="submit" value="Submit">
+      </form> 
+    )rawliteral";
+    char buf[2048] = {};
+    int n = sprintf(buf, site, system1.settings.target_temp, system1.settings.heating, system1.settings.Kp, system1.settings.Kdheating, system1.settings.Kdcooling, system1.settings.Ki);
+    ret += buf;
+  } else if (var == "CONFIRMREBOOT") {
+ char site[] = R"rawliteral(
+      <form action="/reboot" method="POST" onsubmit="return confirm('Are you sure you want to reboot?');">
+      <input type="submit" value="Confirm reboot?">
+      </form>
+    )rawliteral";
+    int n = sprintf(site, site);
+    ret += site;
+  }
+
+  ret.replace("{{content}}", content);
+  return ret;
+}
+
+void webServerSetup() {
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/html", "%PAGEPLACEHOLDER%", webProcessor);
+  });
+
+
+  server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send(200, "text/html", "%SETVARS%", webProcessor);
+  });
+
+  server.on("/extrasettings", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/html", "%EXTRASETVARS%", webProcessor);
+  });
+
+  server.on("/set-variables", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->redirect("/");
+  });
+
+  server.on("/metrics", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", "%METRICSPLACEHOLDER%", webProcessor);
+  });
+
+  server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/html", "%CONFIRMREBOOT%", webProcessor);
+  });
+
+  server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
+    ESP.restart();
+  });
+  server.begin();
 }
 
 void temperatureLoop() {
@@ -269,13 +460,15 @@ void temperatureLoop() {
   }
 
   unsigned long curtime = millis();
+  
+  system1.processSystem();
 }
 
-unsigned long pasttime = 0;
+unsigned long earlierloop = 0;
 void loop() {
   unsigned long curtime = millis();
-  if (curtime - pasttime > 2000) {
+  if (curtime - earlierloop > 2000) {
     temperatureLoop();
+    earlierloop = curtime;
   }
-  pasttime = curtime;
 }
