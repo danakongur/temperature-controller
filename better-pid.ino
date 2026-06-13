@@ -25,13 +25,18 @@ class TemperatureSensor {
 private:
   float temperature;
   SemaphoreHandle_t temperatureMutex;
+
 public:
   uint8_t id[8];
   DeviceAddress address;
-  TemperatureSensor(uint8_t sensorID[8]){
+  DallasTemperature *line;
+  SemaphoreHandle_t *lineMutex;
+  TemperatureSensor(uint8_t sensorID[8], DallasTemperature *line, SemaphoreHandle_t *lineMutex){
     temperatureMutex = xSemaphoreCreateMutex();
     memcpy(id, sensorID, 8);
     memcpy(address, sensorID, sizeof(address));
+    this->line = line;
+    this->lineMutex = lineMutex;
   }
   float getTemperature(){
     float ret = NULL;
@@ -116,12 +121,66 @@ class System {
     }
   }
 
-  void getTemperature(DallasTemperature *sensorLine, SemaphoreHandle_t *sensorMutex) {
-    float temp = sensor->fetchTemperature(sensorLine, sensorMutex);
+  float getTemperature(DallasTemperature *sensorLine, SemaphoreHandle_t *sensorMutex) {
+    return sensor->fetchTemperature(sensorLine, sensorMutex);
+  }
+
+  float pid(float error, float old_error, unsigned long curtime, unsigned long old_time) {
+    float porportional = error;
+
+    float derivative = 0;
+    unsigned long dt = curtime - old_time;
+    derivative = (error - old_error)/dt;
+
+    float Kd = 0;
+    if (derivative > 0) { // error rising, meaning temp is cooling
+      Kd = this->settings.Kdcooling;
+    } else {
+      Kd = this->settings.Kdheating;
+    }
+
+    this->integral += error * (previousTime/1000.0);
+
+    //TODO: maybe throw out integral on large errors?
+    
+    float output = this->settings.Kp * porportional + Kd * derivative + this->settings.Ki * this->integral;
+    return output;
+  }
+
+  void changeRelays() {
+    // the states on my relay are reversed for some reason
+    if (relayState == LOW) {
+      digitalWrite(relayPin, HIGH);
+    } else {
+      digitalWrite(relayPin, LOW);
+    }
   }
 
   void processSystem() {
-    // TODO: remake the whole logic thingy
+    unsigned long curtime = millis();
+    float temp = this->getTemperature(this->sensor->line, this->sensor->lineMutex);
+    float old_error = previousError;
+    float old_time = previousTime;
+    float error = this->settings.target_temp - temp;
+    if (tempQueue.isFull()){
+      float old_temp = tempQueue.dequeue();
+      old_error = settings.target_temp - old_temp;
+    }
+    if (timeQueue.isFull()) {
+      old_time = timeQueue.dequeue();
+    }
+
+    tempQueue.enqueue(temp);
+    timeQueue.enqueue(curtime);
+
+    float output = this->pid(error, old_error, curtime, old_time);
+
+    bool relayvalue = outputToBin(output);
+    this->changeState(relayvalue);
+    changeRelays();
+
+    previousError = error;
+    previousTime = curtime;
   }
 
   bool outputToBin(float output) {
@@ -174,9 +233,7 @@ Settings heatingsettings = {
   0
 };
 
-TemperatureSensor sensor1(sensor1ID);
 
-System system1(&heatingsettings, &sensor1);
 
 SemaphoreHandle_t sensorLineMutex;
 
@@ -188,6 +245,9 @@ void setup() {
 
   sensorLineMutex = xSemaphoreCreateMutex();
 
+  TemperatureSensor sensor1(sensor1ID, &sensorLine, &sensorLineMutex);
+  System system1(&heatingsettings, &sensor1);
+  
   pinMode(RELAY, OUTPUT);
 
   WiFi.begin(ssids[0], passwords[0]);
@@ -207,7 +267,6 @@ void temperatureLoop() {
 
     xSemaphoreGive(sensorLineMutex);
   }
-
 
   unsigned long curtime = millis();
 }
