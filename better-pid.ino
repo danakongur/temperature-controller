@@ -1,3 +1,9 @@
+/**global todo list
+//TODO: save values to esp persistent memory (scratchpad or something)
+//TODO: set debug mode in web ui
+*/
+
+
 #include <ArduinoQueue.h>
 
 #include <ESPAsyncWebServer.h>
@@ -21,7 +27,7 @@ uint8_t sensor2ID[8] = {0x28, 0xFF, 0x64, 0x1F, 0x78, 0x68, 0xB1, 0x6E};
 OneWire oneWire(TEMP);
 DallasTemperature sensorLine(&oneWire);
 
-bool debug = false;
+bool debug = true;
 
 
 
@@ -78,7 +84,6 @@ struct Settings {
 
   bool heating; // is the outlet heating or cooling (not heating)?  bool relayState = LOW;
   float Kp;
-  float Kd;
   float Ki;
   float Kdheating;
   float Kdcooling;
@@ -88,7 +93,7 @@ struct Settings {
     out += "Mode: " + String(heating ? "HEATING" : "COOLING") + "\n";
     out += "Target: " + String(target_temp, 2) + "°C\n";
     out += "Min On/Off: " + String(min_on_time) + "s / " + String(min_off_time) + "s\n";
-    out += "PID: P:" + String(Kp, 2) + " I:" + String(Ki, 4) + " D:" + String(Kd, 2) + "\n";
+    out += "PID: P:" + String(Kp, 2) + " I:" + String(Ki, 4) + "\n";
     out += "Special D: H:" + String(Kdheating, 2) + " C:" + String(Kdcooling, 2) + "\n";
     return out;
   }
@@ -186,7 +191,7 @@ class System {
     
     float output = this->settings.Kp * porportional + Kd * derivative + this->settings.Ki * this->integral;
     if(debug) {
-      Serial.printf("porportional: %.4f, derivative: %.4f, integral: %.4f\n", porportional, derivative, integral);
+      Serial.printf("porportional: %.4f, derivative: %.4f, integral: %.4f\n", porportional, derivative, this->integral);
       Serial.printf("Kp*porportional: %.4f + Kd*derivative: %.4f + Ki*integral: %.4f\noutput = %.4f\n", this->settings.Kp * porportional, Kd * derivative, this->settings.Ki * this->integral, output);
     }
     return output;
@@ -277,7 +282,6 @@ Settings heatingsettings = {
   0,
   0,
   0,
-  0
 };
 
 
@@ -514,7 +518,7 @@ sys2_target_temperature %.2f
         <input type="text" id="Kdheating" name="Kdheating" value="%f"><br><br>
 
         <label for=Kdcooling">Cooling derivative modifier</label><br>
-        <input type="text" id=Kdcooling" name=Kdcooling" value="%f"><br><br>
+        <input type="text" id="Kdcooling" name="Kdcooling" value="%f"><br><br>
 
         <label for="Ki">Integral modifier</label><br>
         <input type="text" id="Ki" name="Ki" value="%f"><br><br>
