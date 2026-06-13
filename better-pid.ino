@@ -82,6 +82,16 @@ struct Settings {
   float Ki;
   float Kdheating;
   float Kdcooling;
+
+  String toString() { // this thing was ai generated, i am ashamed
+    String out = "--- Settings ---\n";
+    out += "Mode: " + String(heating ? "HEATING" : "COOLING") + "\n";
+    out += "Target: " + String(target_temp, 2) + "°C\n";
+    out += "Min On/Off: " + String(min_on_time) + "s / " + String(min_off_time) + "s\n";
+    out += "PID: P:" + String(Kp, 2) + " I:" + String(Ki, 4) + " D:" + String(Kd, 2) + "\n";
+    out += "Special D: H:" + String(Kdheating, 2) + " C:" + String(Kdcooling, 2) + "\n";
+    return out;
+  }
 };
 
 class System {
@@ -105,6 +115,26 @@ class System {
     ArduinoQueue<unsigned long> timeQueue(10);
     this->name = name;
     previousTime = 0;
+  }
+
+  String toString() { // this was ai generated for time sake, sorry facts and logic
+    String out = "========================\n";
+    out += "SYSTEM: " + name + "\n";
+    out += "Status: " + String(relayState ? "RUNNING (ON)" : "IDLE (OFF)") + "\n";
+    out += "Relay Pin: " + String(relayPin) + "\n";
+    
+    // Current state variables
+    out += "Integral: " + String(integral, 4) + "\n";
+    out += "Prev Error: " + String(previousError, 2) + "\n";
+    
+    // Calculate time since last change
+    unsigned long timeInState = (millis() - lastChangeTime) / 1000;
+    out += "Time in current state: " + String(timeInState) + "s\n";
+
+    // Nest the settings string
+    out += settings.toString();
+    out += "========================\n";
+    return out;
   }
 
   void changeState(bool newstate){
@@ -259,7 +289,7 @@ System system1(&heatingsettings, &sensor1, "System1");
 TemperatureSensor sensor2(sensor2ID, &sensorLine, &sensorLineMutex);
 System system2(&heatingsettings, &sensor2, "System2");
 
-System systems[] = {system1, system2};
+System *systems[] = {&system1, &system2};
 
 
 
@@ -289,9 +319,11 @@ void webServerSetup() {
       String ans = request->getParam("target")->value();
       float target = ans.toFloat();
 
-      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
-        if (system.equals(systems[i].name)) {
-          systems[i].settings.target_temp = target;
+      for (int i = 0; i < sizeof(systems)/sizeof(System*); i++) {
+        if (system.equals(systems[i]->name)) {
+          systems[i]->settings.target_temp = target;
+          Serial.println(systems[i]->name);
+          Serial.println("setting this temp");
         }
       }
     }
@@ -299,9 +331,9 @@ void webServerSetup() {
     if (request->hasParam("heating")) {
       String ans = request->getParam("heating")->value();
       bool heat = (ans.toInt());
-      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
-        if (system.equals(systems[i].name)) {
-          systems[i].settings.target_temp = target;
+      for (int i = 0; i < sizeof(systems)/sizeof(System*); i++) {
+        if (system.equals(systems[i]->name)) {
+          systems[i]->settings.heating = heat;
         }
       }
     }
@@ -309,9 +341,10 @@ void webServerSetup() {
 
     if (request->hasParam("Kp")) {
       String ans = request->getParam("Kp")->value();
-      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
-        if (system.equals(systems[i].name)) {
-          systems[i].settings.target_temp = target;
+      float kp = ans.toFloat();
+      for (int i = 0; i < sizeof(systems)/sizeof(System*); i++) {
+        if (system.equals(systems[i]->name)) {
+          systems[i]->settings.Kp = kp;
         }
       }
     }
@@ -319,9 +352,10 @@ void webServerSetup() {
 
     if (request->hasParam("Kdheating")) {
       String ans = request->getParam("Kdheating")->value();
-      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
-        if (system.equals(systems[i].name)) {
-          systems[i].settings.target_temp = target;
+      float kdheat = ans.toFloat();
+      for (int i = 0; i < sizeof(systems)/sizeof(System*); i++) {
+        if (system.equals(systems[i]->name)) {
+          systems[i]->settings.Kdheating = kdheat;
         }
       }
     }
@@ -329,9 +363,10 @@ void webServerSetup() {
 
     if (request->hasParam("Kdcooling")) {
       String ans = request->getParam("Kdcooling")->value();
-      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
-        if (system.equals(systems[i].name)) {
-          systems[i].settings.target_temp = target;
+      float kdcool = ans.toFloat();
+      for (int i = 0; i < sizeof(systems)/sizeof(System*); i++) {
+        if (system.equals(systems[i]->name)) {
+          systems[i]->settings.Kdcooling = kdcool;
         }
       }
     }
@@ -339,27 +374,13 @@ void webServerSetup() {
 
     if (request->hasParam("Ki")) {
       String ans = request->getParam("Ki")->value();
-      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
-        if (system.equals(systems[i].name)) {
-          systems[i].settings.target_temp = target;
+      float ki = ans.toFloat();
+      for (int i = 0; i < sizeof(systems)/sizeof(System*); i++) {
+        if (system.equals(systems[i]->name)) {
+          systems[i]->settings.Ki = ki;
         }
       }
     }
-
-
-    if (request->hasParam("")) {
-      String ans = request->getParam("")->value();
-
-    }
-
-
-    if (request->hasParam("")) {
-      String ans = request->getParam("")->value();
-
-    }
-
-
-
 
 
     request->redirect("/");
@@ -574,6 +595,7 @@ void loop() {
   unsigned long curtime = millis();
   if (curtime - earlierloop > 2000) {
     temperatureLoop();
+    Serial.println(system1.toString());
     earlierloop = curtime;
   }
 }
