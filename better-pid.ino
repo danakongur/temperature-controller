@@ -21,7 +21,7 @@ uint8_t sensor2ID[8] = {0x28, 0xFF, 0x64, 0x1F, 0x78, 0x68, 0xB1, 0x6E};
 OneWire oneWire(TEMP);
 DallasTemperature sensorLine(&oneWire);
 
-bool debug = true;
+bool debug = false;
 
 
 
@@ -86,10 +86,11 @@ struct Settings {
 
 class System {
   public:
+  String name;
   Settings settings;
-  float integral;
+  float integral = 0;
   float previousError;
-  unsigned long previousTime;
+  unsigned long previousTime = 0;
   unsigned long lastChangeTime = 0;
   TemperatureSensor *sensor;
   bool relayState;
@@ -97,12 +98,12 @@ class System {
   ArduinoQueue<float> tempQueue;
   ArduinoQueue<unsigned long> timeQueue;
 
-  System(Settings *startSettings, TemperatureSensor *sensor) {
+  System(Settings *startSettings, TemperatureSensor *sensor, String name) {
     this->sensor = sensor;
     memcpy(&settings, startSettings, sizeof(Settings));
     ArduinoQueue<float> tempQueue(10);
     ArduinoQueue<unsigned long> timeQueue(10);
-
+    this->name = name;
     previousTime = 0;
   }
 
@@ -134,6 +135,9 @@ class System {
 
     float derivative = 0;
     unsigned long dt = curtime - old_time;
+    if (previousTime == 0) {
+      dt = 0;
+    }
     derivative = (error - old_error)/dt;
 
     float Kd = 0;
@@ -142,8 +146,11 @@ class System {
     } else {
       Kd = this->settings.Kdheating;
     }
-
-    this->integral += error * (previousTime/1000.0);
+    
+    // use last dt and not the same dt as derivative
+    if (previousTime != 0) {
+      this->integral += error * ((curtime - previousTime)/1000.0);
+    }
 
     //TODO: maybe throw out integral on large errors?
     
@@ -247,39 +254,130 @@ Settings heatingsettings = {
 
 SemaphoreHandle_t sensorLineMutex;
 TemperatureSensor sensor1(sensor1ID, &sensorLine, &sensorLineMutex);
-System system1(&heatingsettings, &sensor1);
+System system1(&heatingsettings, &sensor1, "System1");
 
 TemperatureSensor sensor2(sensor2ID, &sensorLine, &sensorLineMutex);
-System system2(&heatingsettings, &sensor2);
-  
-void setup() {
-  Serial.begin(9600);
-  Serial.println("started");
-  sensorLine.begin();
-  sensorLine.setResolution(sensor1ID, 9);
+System system2(&heatingsettings, &sensor2, "System2");
 
-  sensorLineMutex = xSemaphoreCreateMutex();
+System systems[] = {system1, system2};
 
 
-  pinMode(RELAY, OUTPUT);
 
-  if (!APMODE){ // Normal mode, connected to wifi
-    WiFi.begin(ssids[0], passwords[0]);
+void webServerSetup() {
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/html", "%PAGEPLACEHOLDER%", webProcessor);
+  });
 
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
+
+  server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send(200, "text/html", "%SETVARS%", webProcessor);
+  });
+
+  server.on("/extrasettings", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/html", "%EXTRASETVARS%", webProcessor);
+  });
+
+  server.on("/set-variables", HTTP_GET, [](AsyncWebServerRequest *request){
+    String system = "System1";
+    String target_temp = "";
+
+    if (request->hasParam("system")) {
+      system = request->getParam("system")->value();
     }
 
-    Serial.print("\nWiFi connected.\nIP address: ");
-    Serial.println(WiFi.localIP());
-  } else { // when no wifi available
-    WiFi.softAP("5g-tower", "typpalingur");
-    delay(10000);
-    Serial.println(WiFi.localIP());
-  }
+    if (request->hasParam("target")) {
+      String ans = request->getParam("target")->value();
+      float target = ans.toFloat();
 
-  webServerSetup();
+      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
+        if (system.equals(systems[i].name)) {
+          systems[i].settings.target_temp = target;
+        }
+      }
+    }
+
+    if (request->hasParam("heating")) {
+      String ans = request->getParam("heating")->value();
+      bool heat = (ans.toInt());
+      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
+        if (system.equals(systems[i].name)) {
+          systems[i].settings.target_temp = target;
+        }
+      }
+    }
+
+
+    if (request->hasParam("Kp")) {
+      String ans = request->getParam("Kp")->value();
+      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
+        if (system.equals(systems[i].name)) {
+          systems[i].settings.target_temp = target;
+        }
+      }
+    }
+
+
+    if (request->hasParam("Kdheating")) {
+      String ans = request->getParam("Kdheating")->value();
+      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
+        if (system.equals(systems[i].name)) {
+          systems[i].settings.target_temp = target;
+        }
+      }
+    }
+
+
+    if (request->hasParam("Kdcooling")) {
+      String ans = request->getParam("Kdcooling")->value();
+      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
+        if (system.equals(systems[i].name)) {
+          systems[i].settings.target_temp = target;
+        }
+      }
+    }
+
+
+    if (request->hasParam("Ki")) {
+      String ans = request->getParam("Ki")->value();
+      for (int i = 0; i < sizeof(systems)/sizeof(System); i++) {
+        if (system.equals(systems[i].name)) {
+          systems[i].settings.target_temp = target;
+        }
+      }
+    }
+
+
+    if (request->hasParam("")) {
+      String ans = request->getParam("")->value();
+
+    }
+
+
+    if (request->hasParam("")) {
+      String ans = request->getParam("")->value();
+
+    }
+
+
+
+
+
+    request->redirect("/");
+  });
+
+  server.on("/metrics", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", "%METRICSPLACEHOLDER%", webProcessor);
+  });
+
+  server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/html", "%CONFIRMREBOOT%", webProcessor);
+  });
+
+  server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
+    request->redirect("/");
+    ESP.restart();
+  });
+  server.begin();
 }
 
 String webProcessor(const String& var) {
@@ -334,7 +432,7 @@ sys1_temperature_celcius %.5f
 
 # HELP sys1_relay_status Current status of relay in system 1
 # TYPE sys1_relay_status gauge
-sys1_relay_status %s
+sys1_relay_status %d
 
 # HELP sys1_target_temperature Current target temperature in system 1
 # TYPE sys1_target_temperature gauge
@@ -346,7 +444,7 @@ sys2_temperature_celcius %.5f
 
 # HELP sys2_relay_status Current status of relay in system 2
 # TYPE sys2_relay_status gauge
-sys2_relay_status %s
+sys2_relay_status %d
 
 # HELP sys2_target_temperature Current target temperature in system 1
 # TYPE sys2_target_temperature gauge
@@ -354,14 +452,14 @@ sys2_target_temperature %.2f
     )rawliteral";
     char buf[2048] = {};
     int n = sprintf(buf, text, sys1temp, system1.relayState, system1.settings.target_temp, sys2temp, system2.relayState, system2.settings.target_temp);
-
-    ret += buf;
+//return cause we dont want html here
+    return String(buf);
   } else if (var == "SETVARS") {
     char site[] = R"rawliteral(
        <form action="/set-variables">
-        <input type="radio" id="sys1" name="system" value="sys1">
+        <input type="radio" id="sys1" name="system" value="System1">
         <label for="sys1">System 1</label><br>
-        <input type="radio" id="sys2" name="system" value="sys2">
+        <input type="radio" id="sys2" name="system" value="System2">
         <label for="sys2">System 2</label><br>
 
         <label for="target">Target temperature:</label><br>
@@ -377,9 +475,9 @@ sys2_target_temperature %.2f
 
  char site[] = R"rawliteral(
        <form action="/set-variables">
-        <input type="radio" id="sys1" name="system" value="sys1">
+        <input type="radio" id="sys1" name="system" value="System1">
         <label for="sys1">System 1</label><br>
-        <input type="radio" id="sys2" name="system" value="sys2">
+        <input type="radio" id="sys2" name="system" value="System2">
         <label for="sys2">System 2</label><br>
 
         <label for="target">Target temperature:</label><br>
@@ -403,8 +501,15 @@ sys2_target_temperature %.2f
         <input type="submit" value="Submit">
       </form> 
     )rawliteral";
+    
     char buf[2048] = {};
-    int n = sprintf(buf, site, system1.settings.target_temp, system1.settings.heating, system1.settings.Kp, system1.settings.Kdheating, system1.settings.Kdcooling, system1.settings.Ki);
+    int target = system1.settings.target_temp;
+    int heating = system1.settings.heating;
+    float porp = system1.settings.Kp;
+    float kdheat = system1.settings.Kdheating;
+    float kdcool = system1.settings.Kdcooling;
+    float integ = system1.settings.Ki;
+    int n = sprintf(buf, site, target, heating, porp, kdheat, kdcool, integ);
     ret += buf;
   } else if (var == "CONFIRMREBOOT") {
  char site[] = R"rawliteral(
@@ -420,37 +525,7 @@ sys2_target_temperature %.2f
   return ret;
 }
 
-void webServerSetup() {
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/html", "%PAGEPLACEHOLDER%", webProcessor);
-  });
 
-
-  server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send(200, "text/html", "%SETVARS%", webProcessor);
-  });
-
-  server.on("/extrasettings", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/html", "%EXTRASETVARS%", webProcessor);
-  });
-
-  server.on("/set-variables", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->redirect("/");
-  });
-
-  server.on("/metrics", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/plain", "%METRICSPLACEHOLDER%", webProcessor);
-  });
-
-  server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/html", "%CONFIRMREBOOT%", webProcessor);
-  });
-
-  server.on("/reboot", HTTP_POST, [](AsyncWebServerRequest *request){
-    ESP.restart();
-  });
-  server.begin();
-}
 
 void temperatureLoop() {
   if(xSemaphoreTake(sensorLineMutex, portMAX_DELAY)) {
@@ -462,9 +537,39 @@ void temperatureLoop() {
   unsigned long curtime = millis();
   
   system1.processSystem();
+  system2.processSystem();
+}
+  
+void setup() {
+  Serial.begin(9600);
+  Serial.println("started");
+  sensorLine.begin();
+  sensorLine.setResolution(sensor1ID, 9);
+
+  sensorLineMutex = xSemaphoreCreateMutex();
+
+
+  pinMode(RELAY, OUTPUT);
+
+  if (!APMODE){ // Normal mode, connected to wifi
+    WiFi.begin(ssids[0], passwords[0]);
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+
+    Serial.print("\nWiFi connected.\nIP address: ");
+    Serial.println(WiFi.localIP());
+  } else { // when no wifi available
+    WiFi.softAP("5g-tower", "typpalingur");
+  }
+  webServerSetup();
 }
 
+
 unsigned long earlierloop = 0;
+
 void loop() {
   unsigned long curtime = millis();
   if (curtime - earlierloop > 2000) {
