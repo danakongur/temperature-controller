@@ -32,16 +32,16 @@ Preferences savedSettings;
 bool debug = true;
 
 typedef struct {
-  uint32_t Kp;
-  uint32_t Kdheating;
-  uint32_t Kdcooling;
-  uint32_t Ki;
-  uint32_t target_temp;
-  uint32_t integral;
+  float Kp;
+  float Kdheating;
+  float Kdcooling;
+  float Ki;
+  float target_temp;
+  float integral;
   uint64_t minoff;
   uint64_t minon;
-  uint8_t heating;
-  uint8_t relayState;
+  bool heating;
+  bool relayState;
   uint8_t relayPin;
   uint8_t systemID;
 
@@ -143,16 +143,16 @@ class System {
   void writeFlash() {
     // write settings and such to flash memory
     storeddata_t latestSettings = {
-      (uint32_t)settings.Kp,
-      (uint32_t)settings.Kdheating,
-      (uint32_t)settings.Kdcooling,
-      (uint32_t)settings.Ki,
-      (uint32_t)settings.target_temp,
-      (uint32_t)integral,
-      (uint64_t)settings.min_off_time,
-      (uint64_t)settings.min_on_time,
-      (uint8_t)settings.heating,
-      (uint8_t)relayState,
+      settings.Kp,
+      settings.Kdheating,
+      settings.Kdcooling,
+      settings.Ki,
+      settings.target_temp,
+      integral,
+      settings.min_off_time,
+      settings.min_on_time,
+      settings.heating,
+      relayState,
       (uint8_t)relayPin,
       systemID
     };
@@ -291,8 +291,10 @@ class System {
     // the states on my relay are reversed for some reason
     if (this->relayState == LOW) {
       digitalWrite(this->relayPin, HIGH);
+      if (this->name.equals("System1")) digitalWrite(2, HIGH);
     } else {
       digitalWrite(this->relayPin, LOW);
+      if (this->name.equals("System1")) digitalWrite(2, LOW);
     }
   }
 
@@ -383,7 +385,7 @@ TemperatureSensor sensor1(sensor1ID, &sensorLine, &sensorLineMutex);
 System system1(&heatingsettings, &sensor1, "System1", RELAY);
 
 TemperatureSensor sensor2(sensor2ID, &sensorLine, &sensorLineMutex);
-System system2(&heatingsettings, &sensor2, "System2", RELAY);
+System system2(&heatingsettings, &sensor2, "System2", RELAY2);
 
 System *systems[] = {&system1, &system2};
 
@@ -736,6 +738,8 @@ void setup() {
 
 
   pinMode(RELAY, OUTPUT);
+  pinMode(RELAY2, OUTPUT);
+  pinMode(2, OUTPUT);
 
   
 
