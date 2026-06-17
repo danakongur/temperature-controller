@@ -328,6 +328,9 @@ class System {
   }
 
   bool outputToBin(float output) {
+    if (abs(output) < 0.5) { // allow for a small error window
+      return this->relayState;
+    }
     if (output > 0) { // read colder than target temperature
       return settings.heating;
     } else {
