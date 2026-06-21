@@ -106,6 +106,7 @@ struct Settings {
 
   String toString() { // this thing was ai generated, i am ashamed
     String out = "--- Settings ---\n";
+    out.reserve(1000);
     out += "Mode: " + String(heating ? "HEATING" : "COOLING") + "\n";
     out += "Target: " + String(target_temp, 2) + "°C\n";
     out += "Min On/Off: " + String(min_on_time) + "s / " + String(min_off_time) + "s\n";
@@ -129,15 +130,17 @@ class System {
   int relayPin;
   ArduinoQueue<float> tempQueue;
   ArduinoQueue<unsigned long> timeQueue;
+  SemaphoreHandle_t systemMutex;
 
-  System(Settings *startSettings, TemperatureSensor *sensor, String name, int pin) {
+  System(Settings *startSettings, TemperatureSensor *sensor, String name, int pin) : tempQueue(10), timeQueue(10){
     this->sensor = sensor;
     memcpy(&settings, startSettings, sizeof(Settings));
-    ArduinoQueue<float> tempQueue(10);
-    ArduinoQueue<unsigned long> timeQueue(10);
+    //ArduinoQueue<float> tempQueue(10);
+    //ArduinoQueue<unsigned long> timeQueue(10);
     this->name = name;
     previousTime = 0;
     this->relayPin = pin;
+    systemMutex = xSemaphoreCreateMutex();
   } 
 
   void writeFlash() {
@@ -199,6 +202,7 @@ class System {
 
   String toString() { // this was ai generated for time sake, sorry facts and logic
     String out = "========================\n";
+    out.reserve(1000);
     out += "SYSTEM: " + name + "\n";
     out += "tatus: " + String(relayState ? "RUNNING (ON)" : "IDLE (OFF)") + "\n";
     out += "Relay Pin: " + String(relayPin) + "\n";
@@ -299,36 +303,39 @@ class System {
   }
 
   void processSystem() {
-    unsigned long curtime = millis();
-    float temp = this->getTemperature(this->sensor->line, this->sensor->lineMutex);
-    Serial.println(name + " temperature: " + String(temp));
-    float old_error = previousError;
-    float old_time = previousTime;
-    float error = this->settings.target_temp - temp;
-    if (tempQueue.isFull()){
-      float old_temp = tempQueue.dequeue();
-      old_error = settings.target_temp - old_temp;
+    if (xSemaphoreTake(this->systemMutex, pdMS_TO_TICKS(100))){
+      unsigned long curtime = millis();
+      float temp = this->getTemperature(this->sensor->line, this->sensor->lineMutex);
+      Serial.println(name + " temperature: " + String(temp));
+      float old_error = previousError;
+      float old_time = previousTime;
+      float error = this->settings.target_temp - temp;
+      if (tempQueue.isFull()){
+        float old_temp = tempQueue.dequeue();
+        old_error = settings.target_temp - old_temp;
+      }
+      if (timeQueue.isFull()) {
+        old_time = timeQueue.dequeue();
+      }
+
+      tempQueue.enqueue(temp);
+      timeQueue.enqueue(curtime);
+
+      float output = this->pid(error, old_error, curtime, old_time);
+
+      bool relayvalue = outputToBin(output);
+      this->changeState(relayvalue);
+      this->changeRelays();
+
+      previousError = error;
+      previousTime = curtime;
+
+      xSemaphoreGive(this->systemMutex);
     }
-    if (timeQueue.isFull()) {
-      old_time = timeQueue.dequeue();
-    }
-
-    tempQueue.enqueue(temp);
-    timeQueue.enqueue(curtime);
-
-    float output = this->pid(error, old_error, curtime, old_time);
-
-    bool relayvalue = outputToBin(output);
-    this->changeState(relayvalue);
-    this->changeRelays();
-
-    previousError = error;
-    previousTime = curtime;
-
   }
 
   bool outputToBin(float output) {
-    if (abs(output) < 0.5) { // allow for a small error window
+    if (abs(output) < 3) { // allow for a small error window
       return this->relayState;
     }
     if (output > 0) { // read colder than target temperature
@@ -553,9 +560,56 @@ void webServerSetup() {
 }
 
 String webProcessor(const String& var) {
-  float sys1temp = system1.sensor->getTemperature();
-  float sys2temp = system2.sensor->getTemperature();
+  float sys1temp;
+  float sys1target;    
+  bool sys1relaystate;     
+  int sys1heating;
+  float sys1porp;
+  float sys1kdheat;
+  float sys1kdcool;
+  float sys1integ;
+  unsigned long sys1minoff;
+  unsigned long sys1minon;    
+  float sys2temp;
+  float sys2target;
+  bool sys2relaystate;
+  int sys2heating;
+  float sys2porp;
+  float sys2kdheat;
+  float sys2kdcool;
+  float sys2integ;
+  unsigned long sys2minoff;
+  unsigned long sys2minon;
 
+  if (xSemaphoreTake(system1.systemMutex, portMAX_DELAY)) {
+    sys1temp = system1.sensor->getTemperature();
+    sys1target = system1.settings.target_temp;
+    sys1relaystate = system1.relayState;
+    sys1heating = system1.settings.heating;
+    sys1porp = system1.settings.Kp;
+    sys1kdheat = system1.settings.Kdheating;
+    sys1kdcool = system1.settings.Kdcooling;
+    sys1integ = system1.settings.Ki;
+    sys1minoff = system1.settings.min_off_time;
+    sys1minon = system1.settings.min_on_time;
+    
+    xSemaphoreGive(system1.systemMutex);
+  }
+  
+  if (xSemaphoreTake(system2.systemMutex, portMAX_DELAY)) {
+    sys2temp = system2.sensor->getTemperature();
+    sys2target = system2.settings.target_temp;
+    sys2relaystate = system2.relayState;
+    sys2heating = system2.settings.heating;
+    sys2porp = system2.settings.Kp;
+    sys2kdheat = system2.settings.Kdheating;
+    sys2kdcool = system2.settings.Kdcooling;
+    sys2integ = system2.settings.Ki;
+    sys2minoff = system2.settings.min_off_time;
+    sys2minon = system2.settings.min_on_time;
+
+    xSemaphoreGive(system2.systemMutex);
+  }
 
   char site[] = R"rawliteral(
 <!DOCTYPE html>
@@ -571,7 +625,8 @@ String webProcessor(const String& var) {
 
   String ret(site);
   String content = "";
-
+  content.reserve(5000);
+  char buf[2048*4] = {};
   if (var == "PAGEPLACEHOLDER") {
     char site[] = R"rawliteral(
 <nav>
@@ -594,9 +649,9 @@ String webProcessor(const String& var) {
 <p>Relay is currently %d</p>
     )rawliteral";
 
-    char buf[2048]={};
+    buf[0] = '\0';
 
-    int n = sprintf(buf, site, system1.settings.target_temp, sys1temp, system1.relayState, system2.settings.target_temp, sys2temp, system2.relayState);
+    int n = snprintf(buf, sizeof(buf), site, sys1target, sys1temp, sys1relaystate, sys2target, sys2temp, sys2relaystate);
 
     String buffer(buf);
     
@@ -635,8 +690,8 @@ sys2_relay_status %d
 # TYPE sys2_target_temperature gauge
 sys2_target_temperature %.2f
     )rawliteral";
-    char buf[2048] = {};
-    int n = sprintf(buf, text, sys1temp, system1.relayState, system1.settings.target_temp, sys2temp, system2.relayState, system2.settings.target_temp);
+    buf[0] = '\0';
+    int n = snprintf(buf, sizeof(buf), text, sys1temp, sys1relaystate, sys1target, sys2temp, sys2relaystate, sys2target);
 //return cause we dont want html here
     return String(buf);
   } else if (var == "SETVARS") {
@@ -653,9 +708,7 @@ sys2_target_temperature %.2f
         <input type="submit" value="Submit">
       </form> 
     )rawliteral";
-    char buf[2048] = {};
-    int n = sprintf(buf, site);
-    ret += buf;
+    ret += site;
   } else if (var == "EXTRASETVARS") {
 
  char site[] = R"rawliteral(
@@ -693,14 +746,8 @@ sys2_target_temperature %.2f
       </form> 
     )rawliteral";
     
-    char buf[2048] = {};
-    int target = system1.settings.target_temp;
-    int heating = system1.settings.heating;
-    float porp = system1.settings.Kp;
-    float kdheat = system1.settings.Kdheating;
-    float kdcool = system1.settings.Kdcooling;
-    float integ = system1.settings.Ki;
-    int n = sprintf(buf, site, target, heating, porp, kdheat, kdcool, integ, system1.settings.min_off_time, system1.settings.min_on_time);
+    buf[0] = '\0';
+    int n = snprintf(buf, sizeof(buf), site, sys1target, sys1heating, sys1porp, sys1kdheat, sys1kdcool, sys1integ, sys1minoff, sys1minon);
     ret += buf;
   } else if (var == "CONFIRMREBOOT") {
  char site[] = R"rawliteral(
@@ -708,8 +755,9 @@ sys2_target_temperature %.2f
       <input type="submit" value="Confirm reboot?">
       </form>
     )rawliteral";
-    int n = sprintf(site, site);
-    ret += site;
+    buf[0] = '\0';
+    int n = snprintf(buf, sizeof(buf), site);
+    ret += buf;
   }
 
   ret.replace("{{content}}", content);
@@ -735,7 +783,8 @@ void setup() {
   Serial.begin(9600);
   Serial.println("started");
   sensorLine.begin();
-  sensorLine.setResolution(sensor1ID, 9);
+  sensorLine.setResolution(sensor1ID, 11);
+  sensorLine.setResolution(sensor2ID, 11);
 
   sensorLineMutex = xSemaphoreCreateMutex();
 
