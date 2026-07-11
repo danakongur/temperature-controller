@@ -19,14 +19,15 @@
 #define APMODE false
 
 #define RELAY 17
-#define RELAY2 18
-#define TEMP 16
+#define RELAY2 27
+#define TEMP1 18
+#define TEMP2 19
 
-uint8_t sensor1ID[8] = {0x28, 0xFF, 0x64, 0x1F, 0x78, 0x74, 0x68, 0x04};
-uint8_t sensor2ID[8] = {0x28, 0xFF, 0x64, 0x1F, 0x78, 0x68, 0xB1, 0x6E};
 
-OneWire oneWire(TEMP);
-DallasTemperature sensorLine(&oneWire);
+OneWire sensor1wire(TEMP1);
+OneWire sensor2wire(TEMP2);
+DallasTemperature sensor1line(&sensor1wire);
+DallasTemperature sensor2line(&sensor2wire);
 Preferences savedSettings;
 
 bool debug = true;
@@ -81,10 +82,10 @@ public:
       xSemaphoreGive(temperatureMutex);
     }
   }
-  float fetchTemperature(DallasTemperature *sensorLine, SemaphoreHandle_t *lineMutex) {
+  float fetchTemperature(DallasTemperature *sensor1line, SemaphoreHandle_t *lineMutex) {
     float recv = -121;
     if(xSemaphoreTake(*lineMutex, portMAX_DELAY)){
-      recv = sensorLine->getTempC(address);
+      recv = sensor1line->getTempC(address);
       xSemaphoreGive(*lineMutex);
     }
     setTemperature(recv);
@@ -161,13 +162,24 @@ class System {
     };
 
     savedSettings.begin(name.c_str());
-    savedSettings.putBytes(name.c_str(), &latestSettings, sizeof(latestSettings));
+    //savedSettings.putBytes(name.c_str(), &latestSettings, sizeof(latestSettings));
+    savedSettings.putFloat("Kp", settings.Kp);
+    savedSettings.putFloat("Kdheating", settings.Kdheating);
+    savedSettings.putFloat("Kdcooling", settings.Kdcooling);
+    savedSettings.putFloat("Ki", settings.Ki);
+    savedSettings.putFloat("target_temp", settings.target_temp);
+    savedSettings.putUInt("min_off_time", settings.min_off_time);
+    savedSettings.putUInt("min_on_time", settings.min_on_time);
+    savedSettings.putBool("heating", settings.heating);
+    savedSettings.putUChar("systemID", systemID);
+    savedSettings.end();
+    
   }
 
   void getFlash() {
     // initialize concent from flash memory
-    savedSettings.begin(name.c_str());
-    size_t memlen = savedSettings.getBytesLength(name.c_str());
+    savedSettings.begin(name.c_str(), true);
+    /*size_t memlen = savedSettings.getBytesLength(name.c_str());
     if (memlen != sizeof(storeddata_t)) { // check if its the right size
       Serial.println("flash did not have correct size");
       return;
@@ -192,12 +204,98 @@ class System {
 
     //integral = (float)newSettings->integral;
     relayState = (bool)newSettings->relayState;
-    //relayPin = (int)newSettings->relayPin;
+    //relayPin = (int)newSettings->relayPin;*/
+    
+    /*if(savedSettings.isKey("Kp")) {
+      settings.Kp = savedSettings.getFloat("Kp");
+    }
+    if(savedSettings.isKey("Kdheating")) {
+      settings.Kdheating = savedSettings.getFloat("Kdheating");
+    }
+    if(savedSettings.isKey("Kdcooling")) {
+      settings.Kdcooling = savedSettings.getFloat("Kdcooling");
+    }
+    if(savedSettings.isKey("Ki")) {
+      settings.Ki = savedSettings.getFloat("Ki");
+    }
+    if(savedSettings.isKey("target_temp")) {
+      settings.target_temp = savedSettings.getFloat("target_temp");
+    }
+    if(savedSettings.isKey("min_off_time")) {
+      settings.min_off_time = savedSettings.getUInt("min_off_time");
+    }
+    if(savedSettings.isKey("min_on_time")) {
+      settings.min_on_time = savedSettings.getUInt("min_on_time");
+    }
+    if(savedSettings.isKey("heating")) {
+      settings.heating = savedSettings.getBool("heating");
+    }
+    if(savedSettings.isKey("systemID")) {
+      systemID = savedSettings.getUChar("systemID");
+    }*/
+    if(savedSettings.isKey("Kp")) {
+      settings.Kp = savedSettings.getFloat("Kp");
+    } else {
+      Serial.println("Kp was not stored");
+    }
+
+    if(savedSettings.isKey("Kdheating")) {
+      settings.Kdheating = savedSettings.getFloat("Kdheating");
+    } else {
+      Serial.println("Kdheating was not stored");
+    }
+
+    if(savedSettings.isKey("Kdcooling")) {
+      settings.Kdcooling = savedSettings.getFloat("Kdcooling");
+    } else {
+      Serial.println("Kdcooling was not stored");
+    }
+
+    if(savedSettings.isKey("Ki")) {
+      settings.Ki = savedSettings.getFloat("Ki");
+    } else {
+      Serial.println("Ki was not stored");
+    }
+
+    if(savedSettings.isKey("target_temp")) {
+      settings.target_temp = savedSettings.getFloat("target_temp");
+    } else {
+      Serial.println("target_temp was not stored");
+    }
+
+    if(savedSettings.isKey("min_off_time")) {
+      settings.min_off_time = savedSettings.getUInt("min_off_time");
+    } else {
+      Serial.println("min_off_time was not stored");
+    }
+
+    if(savedSettings.isKey("min_on_time")) {
+      settings.min_on_time = savedSettings.getUInt("min_on_time");
+    } else {
+      Serial.println("min_on_time was not stored");
+    }
+
+    if(savedSettings.isKey("heating")) {
+      settings.heating = savedSettings.getBool("heating");
+    } else {
+      Serial.println("heating was not stored");
+    }
+
+    if(savedSettings.isKey("systemID")) {
+      systemID = savedSettings.getUChar("systemID");
+    } else {
+      Serial.println("systemID was not stored");
+    }
+
+
+    savedSettings.end();
   }
 
   void clearFlash() {
     savedSettings.begin(name.c_str());
     savedSettings.remove(name.c_str());
+    savedSettings.clear();
+    savedSettings.end();
   }
 
   String toString() { // this was ai generated for time sake, sorry facts and logic
@@ -241,8 +339,8 @@ class System {
     }
   }
 
-  float getTemperature(DallasTemperature *sensorLine, SemaphoreHandle_t *sensorMutex) {
-    return sensor->fetchTemperature(sensorLine, sensorMutex);
+  float getTemperature(DallasTemperature *sensor1line, SemaphoreHandle_t *sensorMutex) {
+    return sensor->fetchTemperature(sensor1line, sensorMutex);
   }
 
   float pid(float error, float old_error, unsigned long curtime, unsigned long old_time) {
@@ -390,11 +488,11 @@ Settings heatingsettings = {
 
 
 
-SemaphoreHandle_t sensorLineMutex;
-TemperatureSensor sensor1(sensor1ID, &sensorLine, &sensorLineMutex);
+SemaphoreHandle_t sensor1lineMutex;
+TemperatureSensor sensor1(sensor1ID, &sensor1line, &sensor1lineMutex);
 System system1(&heatingsettings, &sensor1, "System1", RELAY);
 
-TemperatureSensor sensor2(sensor2ID, &sensorLine, &sensorLineMutex);
+TemperatureSensor sensor2(sensor2ID, &sensor1line, &sensor1lineMutex);
 System system2(&heatingsettings, &sensor2, "System2", RELAY2);
 
 System *systems[] = {&system1, &system2};
@@ -616,6 +714,7 @@ String webProcessor(const String& var) {
 <html>
     <head>
         <title>Temperature controller</title>
+        <meta charset="UTF-8">
     </head>
     <body>
     {{content}}
@@ -709,7 +808,7 @@ sys2_target_temperature %.2f
       </form> 
     )rawliteral";
     ret += site;
-  } else if (var == "EXTRASETVARS") {
+  } else if (var == "EXTRASETVARS") {/*
 
  char site[] = R"rawliteral(
        <form action="/set-variables">
@@ -719,7 +818,7 @@ sys2_target_temperature %.2f
         <label for="sys2">System 2</label><br>
 
         <label for="target">Target temperature:</label><br>
-        <input type="text" id="target" name="target" value="%d"><br>
+        <input type="text" id="target" name="target" value="%.2f"><br>
 
         <label for="heating">Heating (0/1):</label><br>
         <input type="text" id="heating" name="heating" value="%d"><br>
@@ -744,10 +843,117 @@ sys2_target_temperature %.2f
 
         <input type="submit" value="Submit">
       </form> 
+
+
     )rawliteral";
     
+    char site2[] = R"rawliteral(
+    
+      <h1>Current values</h1>
+      <h2>System 1</h2>
+
+
+      <h2>System 2</h2>
+    )rawliteral";
     buf[0] = '\0';
-    int n = snprintf(buf, sizeof(buf), site, sys1target, sys1heating, sys1porp, sys1kdheat, sys1kdcool, sys1integ, sys1minoff, sys1minon);
+    int n = snprintf(buf, sizeof(buf), site, sys1target, sys1heating, sys1porp, sys1kdheat, sys1kdcool, sys1integ, sys1minoff, sys1minon);*/
+    // 1. The HTML Template
+    // Note: %f for floats, %d for booleans/ints, %lu for unsigned long
+    char site[] = R"rawliteral(
+      <form action="/set-variables">
+        <h3>Edit Settings</h3>
+        <input type="radio" id="sys1" name="system" value="System1" checked>
+        <label for="sys1">System 1</label>
+        <input type="radio" id="sys2" name="system" value="System2">
+        <label for="sys2">System 2</label><br><br>
+
+        <label for="target">Target temperature:</label><br>
+        <input type="text" id="target" name="target" value="%.2f"><br>
+
+        <label for="heating">Heating (1) or Cooling (0):</label><br>
+        <input type="text" id="heating" name="heating" value="%d"><br>
+
+        <label for="Kp">Proportional (Kp):</label><br>
+        <input type="text" id="Kp" name="Kp" value="%.4f"><br>
+
+        <label for="Kdheating">Heating Derivative (Kd):</label><br>
+        <input type="text" id="Kdheating" name="Kdheating" value="%.4f"><br>
+
+        <label for="Kdcooling">Cooling Derivative (Kd):</label><br>
+        <input type="text" id="Kdcooling" name="Kdcooling" value="%.4f"><br>
+
+        <label for="Ki">Integral (Ki):</label><br>
+        <input type="text" id="Ki" name="Ki" value="%.4f"><br>
+
+        <label for="minoff">Min Off Time (ms):</label><br>
+        <input type="text" id="minoff" name="minoff" value="%lu"><br>
+        
+        <label for="minon">Min On Time (ms):</label><br>
+        <input type="text" id="minon" name="minon" value="%lu"><br><br>
+
+        <input type="submit" value="Apply Settings">
+      </form> 
+
+      <hr>
+      <h2>Current Configuration Summary</h2>
+      <table border="1" style="width:100%; text-align:left; border-collapse: collapse;">
+        <tr>
+          <th>Setting</th>
+          <th>System 1</th>
+          <th>System 2</th>
+        </tr>
+        <tr>
+          <td>Target Temp</td>
+          <td>%.2f°C</td>
+          <td>%.2f°C</td>
+        </tr>
+        <tr>
+          <td>Mode</td>
+          <td>%s</td>
+          <td>%s</td>
+        </tr>
+        <tr>
+          <td>Kp</td>
+          <td>%.4f</td>
+          <td>%.4f</td>
+        </tr>
+        <tr>
+          <td>Kd (Heat/Cool)</td>
+          <td>%.2f / %.2f</td>
+          <td>%.2f / %.2f</td>
+        </tr>
+        <tr>
+          <td>Ki</td>
+          <td>%.4f</td>
+          <td>%.4f</td>
+        </tr>
+        <tr>
+          <td>Min On/Off (s)</td>
+          <td>%lu / %lu</td>
+          <td>%lu / %lu</td>
+        </tr>
+      </table>
+    )rawliteral";
+
+    buf[0] = '\0';
+
+    // 2. Map variables to the specifiers
+    // We pass sys1 values to the form, then both sys1 and sys2 to the table
+    snprintf(buf, sizeof(buf), site, 
+      // Form values (defaulting to System 1)
+      sys1target, sys1heating, sys1porp, sys1kdheat, sys1kdcool, sys1integ, sys1minoff, sys1minon,
+      
+      // Table values - System 1 vs System 2
+      sys1target, sys2target,
+      sys1heating ? "HEATING" : "COOLING", sys2heating ? "HEATING" : "COOLING",
+      sys1porp, sys2porp,
+      sys1kdheat, sys1kdcool, sys2kdheat, sys2kdcool,
+      sys1integ, sys2integ,
+      sys1minon/1000, sys1minoff/1000, sys2minon/1000, sys2minoff/1000
+    );
+
+
+
     ret += buf;
   } else if (var == "CONFIRMREBOOT") {
  char site[] = R"rawliteral(
@@ -767,10 +973,10 @@ sys2_target_temperature %.2f
 
 
 void temperatureLoop() {
-  if(xSemaphoreTake(sensorLineMutex, portMAX_DELAY)) {
-    sensorLine.requestTemperatures();
+  if(xSemaphoreTake(sensor1lineMutex, portMAX_DELAY)) {
+    sensor1line.requestTemperatures();
 
-    xSemaphoreGive(sensorLineMutex);
+    xSemaphoreGive(sensor1lineMutex);
   }
 
   unsigned long curtime = millis();
@@ -782,11 +988,11 @@ void temperatureLoop() {
 void setup() {
   Serial.begin(9600);
   Serial.println("started");
-  sensorLine.begin();
-  sensorLine.setResolution(sensor1ID, 11);
-  sensorLine.setResolution(sensor2ID, 11);
+  sensor1line.begin();
+  sensor1line.setResolution(sensor1ID, 11);
+  sensor1line.setResolution(sensor2ID, 11);
 
-  sensorLineMutex = xSemaphoreCreateMutex();
+  sensor1lineMutex = xSemaphoreCreateMutex();
 
 
   pinMode(RELAY, OUTPUT);
