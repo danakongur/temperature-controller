@@ -23,6 +23,7 @@
 #define TEMP1 18
 #define TEMP2 19
 
+uint8_t sensorID[8] = {0};
 
 OneWire sensor1wire(TEMP1);
 OneWire sensor2wire(TEMP2);
@@ -82,10 +83,10 @@ public:
       xSemaphoreGive(temperatureMutex);
     }
   }
-  float fetchTemperature(DallasTemperature *sensor1line, SemaphoreHandle_t *lineMutex) {
+  float fetchTemperature() {
     float recv = -121;
     if(xSemaphoreTake(*lineMutex, portMAX_DELAY)){
-      recv = sensor1line->getTempC(address);
+      recv = this->line->getTempCByIndex(0);
       xSemaphoreGive(*lineMutex);
     }
     setTemperature(recv);
@@ -233,6 +234,7 @@ class System {
     if(savedSettings.isKey("systemID")) {
       systemID = savedSettings.getUChar("systemID");
     }*/
+    // i used mr ai to add the else statements for debugging
     if(savedSettings.isKey("Kp")) {
       settings.Kp = savedSettings.getFloat("Kp");
     } else {
@@ -339,8 +341,8 @@ class System {
     }
   }
 
-  float getTemperature(DallasTemperature *sensor1line, SemaphoreHandle_t *sensorMutex) {
-    return sensor->fetchTemperature(sensor1line, sensorMutex);
+  float getTemperature() {
+    return sensor->fetchTemperature();
   }
 
   float pid(float error, float old_error, unsigned long curtime, unsigned long old_time) {
@@ -403,7 +405,7 @@ class System {
   void processSystem() {
     if (xSemaphoreTake(this->systemMutex, pdMS_TO_TICKS(100))){
       unsigned long curtime = millis();
-      float temp = this->getTemperature(this->sensor->line, this->sensor->lineMutex);
+      float temp = this->getTemperature();
       Serial.println(name + " temperature: " + String(temp));
       float old_error = previousError;
       float old_time = previousTime;
@@ -489,10 +491,11 @@ Settings heatingsettings = {
 
 
 SemaphoreHandle_t sensor1lineMutex;
-TemperatureSensor sensor1(sensor1ID, &sensor1line, &sensor1lineMutex);
+SemaphoreHandle_t sensor2lineMutex;
+TemperatureSensor sensor1(sensorID, &sensor1line, &sensor1lineMutex);
 System system1(&heatingsettings, &sensor1, "System1", RELAY);
 
-TemperatureSensor sensor2(sensor2ID, &sensor1line, &sensor1lineMutex);
+TemperatureSensor sensor2(sensorID, &sensor2line, &sensor2lineMutex);
 System system2(&heatingsettings, &sensor2, "System2", RELAY2);
 
 System *systems[] = {&system1, &system2};
@@ -979,6 +982,13 @@ void temperatureLoop() {
     xSemaphoreGive(sensor1lineMutex);
   }
 
+  if(xSemaphoreTake(sensor2lineMutex, portMAX_DELAY)) {
+    sensor2line.requestTemperatures();
+
+    xSemaphoreGive(sensor2lineMutex);
+  }
+
+
   unsigned long curtime = millis();
   
   system1.processSystem();
@@ -989,10 +999,12 @@ void setup() {
   Serial.begin(9600);
   Serial.println("started");
   sensor1line.begin();
-  sensor1line.setResolution(sensor1ID, 11);
-  sensor1line.setResolution(sensor2ID, 11);
+  sensor1line.setResolution(12);
+  sensor2line.begin();
+  sensor2line.setResolution(12);
 
   sensor1lineMutex = xSemaphoreCreateMutex();
+  sensor2lineMutex = xSemaphoreCreateMutex();
 
 
   pinMode(RELAY, OUTPUT);
