@@ -16,19 +16,16 @@
 
 #include <Preferences.h>
 
-#define APMODE false
+#define APMODE true
+#define ONBOARDLED 8
 
-#define RELAY 17
-#define RELAY2 27
-#define TEMP1 18
-#define TEMP2 19
+#define RELAY 0
+#define TEMP1 3
 
 uint8_t sensorID[8] = {0};
 
 OneWire sensor1wire(TEMP1);
-OneWire sensor2wire(TEMP2);
 DallasTemperature sensor1line(&sensor1wire);
-DallasTemperature sensor2line(&sensor2wire);
 Preferences savedSettings;
 
 bool debug = true;
@@ -395,10 +392,10 @@ class System {
     // the states on my relay are reversed for some reason
     if (this->relayState == LOW) {
       digitalWrite(this->relayPin, HIGH);
-      if (this->name.equals("System1")) digitalWrite(2, HIGH);
+      if (this->name.equals("System1")) digitalWrite(ONBOARDLED, HIGH);
     } else {
       digitalWrite(this->relayPin, LOW);
-      if (this->name.equals("System1")) digitalWrite(2, LOW);
+      if (this->name.equals("System1")) digitalWrite(ONBOARDLED, LOW);
     }
   }
 
@@ -495,10 +492,8 @@ SemaphoreHandle_t sensor2lineMutex;
 TemperatureSensor sensor1(sensorID, &sensor1line, &sensor1lineMutex);
 System system1(&heatingsettings, &sensor1, "System1", RELAY);
 
-TemperatureSensor sensor2(sensorID, &sensor2line, &sensor2lineMutex);
-System system2(&heatingsettings, &sensor2, "System2", RELAY2);
 
-System *systems[] = {&system1, &system2};
+System *systems[] = {&system1};
 
 
 
@@ -641,7 +636,6 @@ void webServerSetup() {
 
   server.on("/save", HTTP_GET, [](AsyncWebServerRequest *request){
     system1.writeFlash();
-    system2.writeFlash();
     request->redirect("/");
   });
 
@@ -652,7 +646,6 @@ void webServerSetup() {
 
   server.on("/clear-rom", HTTP_GET, [](AsyncWebServerRequest *request){
     system1.clearFlash();
-    system2.clearFlash();
     request->redirect("/");
   });
 
@@ -697,20 +690,6 @@ String webProcessor(const String& var) {
     xSemaphoreGive(system1.systemMutex);
   }
   
-  if (xSemaphoreTake(system2.systemMutex, portMAX_DELAY)) {
-    sys2temp = system2.sensor->getTemperature();
-    sys2target = system2.settings.target_temp;
-    sys2relaystate = system2.relayState;
-    sys2heating = system2.settings.heating;
-    sys2porp = system2.settings.Kp;
-    sys2kdheat = system2.settings.Kdheating;
-    sys2kdcool = system2.settings.Kdcooling;
-    sys2integ = system2.settings.Ki;
-    sys2minoff = system2.settings.min_off_time;
-    sys2minon = system2.settings.min_on_time;
-
-    xSemaphoreGive(system2.systemMutex);
-  }
 
   char site[] = R"rawliteral(
 <!DOCTYPE html>
@@ -982,17 +961,10 @@ void temperatureLoop() {
     xSemaphoreGive(sensor1lineMutex);
   }
 
-  if(xSemaphoreTake(sensor2lineMutex, portMAX_DELAY)) {
-    sensor2line.requestTemperatures();
-
-    xSemaphoreGive(sensor2lineMutex);
-  }
-
 
   unsigned long curtime = millis();
   
   system1.processSystem();
-  system2.processSystem();
 }
   
 void setup() {
@@ -1000,16 +972,12 @@ void setup() {
   Serial.println("started");
   sensor1line.begin();
   sensor1line.setResolution(12);
-  sensor2line.begin();
-  sensor2line.setResolution(12);
-
   sensor1lineMutex = xSemaphoreCreateMutex();
   sensor2lineMutex = xSemaphoreCreateMutex();
 
 
   pinMode(RELAY, OUTPUT);
-  pinMode(RELAY2, OUTPUT);
-  pinMode(2, OUTPUT);
+  pinMode(ONBOARDLED, OUTPUT);
 
   
 
@@ -1032,11 +1000,11 @@ void setup() {
   //TODO: verify this data?
 
   system1.getFlash();
-  system2.getFlash();
 
 
   if (!APMODE){ // Normal mode, connected to wifi
     WiFi.begin(ssids[0], passwords[0]);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
@@ -1047,6 +1015,7 @@ void setup() {
     Serial.println(WiFi.localIP());
   } else { // when no wifi available
     WiFi.softAP("5g-tower", "typpalingur");
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
   }
   webServerSetup();
 }
@@ -1065,7 +1034,6 @@ void loop() {
 
     if (curtime - savedDataearlier > savedatainterval) {
       system1.writeFlash();
-      system2.writeFlash();
       savedDataearlier = curtime;
     }
   }
