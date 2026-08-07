@@ -20,7 +20,7 @@
 #define ONBOARDLED 8
 
 #define RELAY 0
-#define TEMP1 3
+#define TEMP1 1
 
 uint8_t sensorID[8] = {0};
 
