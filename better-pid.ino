@@ -22,6 +22,12 @@
 #define RELAY2 27
 #define TEMP1 18
 #define TEMP2 19
+#define INTERNET_CONNECT_LED 2 // led to show internet connectivity, currently on board led
+
+#define WIFI_TIMEOUT_MS 20000 // 20 second WiFi connection timeout
+#define WIFI_RECOVER_TIME_MS 30000 // Wait 30 seconds after a failed connection attempt
+
+bool webServerStarted = false;
 
 uint8_t sensorID[8] = {0};
 
@@ -31,7 +37,58 @@ DallasTemperature sensor1line(&sensor1wire);
 DallasTemperature sensor2line(&sensor2wire);
 Preferences savedSettings;
 
-bool debug = true;
+WiFiMulti wifiMulti;
+const int networks = 1;
+const char* ssids[] = {"Vikurbakki18"};
+const char* passwords[] = {"Fletturimi35"};
+
+    /*WiFi.begin(ssids[0], passwords[0]);
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+
+    Serial.print("\nWiFi connected.\nIP address: ");
+    Serial.println(WiFi.localIP());*/
+
+// function from https://simplyexplained.com/blog/esp32-keep-wifi-alive-with-freertos-task/
+void keepWifiAlive(void *parameter) {
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED) {
+      digitalWrite(INTERNET_CONNECT_LED, HIGH);
+      
+      vTaskDelay(10000 / portTICK_PERIOD_MS);
+      continue;
+    }
+    digitalWrite(INTERNET_CONNECT_LED, LOW);
+    Serial.println("[WIFI] Connecting");
+    WiFi.begin(ssids[0], passwords[0]);
+
+    unsigned long startAttemptTime = millis();
+
+    // Keep looping while we're not connected and haven't reached the timeout
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_TIMEOUT_MS){
+      // tiny blinking while connecting
+      digitalWrite(INTERNET_CONNECT_LED, HIGH);
+      vTaskDelay(10/portTICK_PERIOD_MS);
+      digitalWrite(INTERNET_CONNECT_LED, LOW);
+      vTaskDelay(500/portTICK_PERIOD_MS);
+    }
+
+    // When we couldn't make a WiFi connection (or the timeout expired)
+		// sleep for a while and then retry.
+    if(WiFi.status() != WL_CONNECTED){
+      Serial.println("[WIFI] FAILED");
+      vTaskDelay(WIFI_RECOVER_TIME_MS / portTICK_PERIOD_MS);
+			continue;
+    }
+    digitalWrite(INTERNET_CONNECT_LED, HIGH);
+    Serial.println("[WIFI] Connected: " + WiFi.localIP());
+  }
+}
+
+bool debug = false;
 
 typedef struct {
   float Kp;
@@ -124,6 +181,7 @@ class System {
   uint8_t systemID;
   Settings settings;
   float integral = 0;
+  float filteredDerivative = 0;
   float previousError;
   unsigned long previousTime = 0;
   unsigned long lastChangeTime = 0;
@@ -348,19 +406,21 @@ class System {
   float pid(float error, float old_error, unsigned long curtime, unsigned long old_time) {
     float porportional = error;
 
-    float derivative = 0;
+    float rawDerivative = 0;
     unsigned long dt = curtime - old_time;
     if (previousTime == 0) {
       dt = 0;
     }
-    derivative = (error - old_error)/(dt/1000.0);
+    rawDerivative = (error - old_error)/(dt/1000.0);
 
     float Kd = 0;
-    if (derivative > 0) { // error rising, meaning temp is cooling
+    if (rawDerivative > 0) { // error rising, meaning temp is cooling
       Kd = this->settings.Kdcooling;
     } else {
       Kd = this->settings.Kdheating;
     }
+    float alpha = 0.1;
+    filteredDerivative = alpha * rawDerivative + (1.0 - alpha) * this->filteredDerivative;
     
     
     // use last dt and not the same dt as derivative
@@ -383,10 +443,10 @@ class System {
 
     //TODO: maybe throw out integral on large errors?
     
-    float output = this->settings.Kp * porportional + Kd * derivative + this->settings.Ki * this->integral;
+    float output = this->settings.Kp * porportional + Kd * this->filteredDerivative + this->settings.Ki * this->integral;
     if(debug) {
-      Serial.printf("porportional: %.4f, derivative: %.4f, integral: %.4f\n", porportional, derivative, this->integral);
-      Serial.printf("Kp*porportional: %.4f + Kd*derivative: %.4f + Ki*integral: %.4f\noutput = %.4f\n", this->settings.Kp * porportional, Kd * derivative, this->settings.Ki * this->integral, output);
+      Serial.printf("porportional: %.4f, filteredDerivative: %.4f, integral: %.4f\n", porportional, filteredDerivative, this->integral);
+      Serial.printf("Kp*porportional: %.4f + Kd*filteredDerivative: %.4f + Ki*integral: %.4f\noutput = %.4f\n", this->settings.Kp * porportional, Kd * filteredDerivative, this->settings.Ki * this->integral, output);
     }
     return output;
   }
@@ -395,10 +455,8 @@ class System {
     // the states on my relay are reversed for some reason
     if (this->relayState == LOW) {
       digitalWrite(this->relayPin, HIGH);
-      if (this->name.equals("System1")) digitalWrite(2, HIGH);
     } else {
       digitalWrite(this->relayPin, LOW);
-      if (this->name.equals("System1")) digitalWrite(2, LOW);
     }
   }
 
@@ -448,10 +506,7 @@ class System {
 
 
 
-WiFiMulti wifiMulti;
-const int networks = 1;
-const char* ssids[] = {"Vikurbakki18"};
-const char* passwords[] = {"Fletturimi35"};
+
 
 
 AsyncWebServer server(80);
@@ -657,7 +712,7 @@ void webServerSetup() {
   });
 
 
-  server.begin();
+  
 }
 
 String webProcessor(const String& var) {
@@ -1036,7 +1091,7 @@ void setup() {
 
 
   if (!APMODE){ // Normal mode, connected to wifi
-    WiFi.begin(ssids[0], passwords[0]);
+    /*WiFi.begin(ssids[0], passwords[0]);
 
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
@@ -1044,7 +1099,18 @@ void setup() {
     }
 
     Serial.print("\nWiFi connected.\nIP address: ");
-    Serial.println(WiFi.localIP());
+    Serial.println(WiFi.localIP());*/
+
+    // from https://simplyexplained.com/blog/esp32-keep-wifi-alive-with-freertos-task/
+    xTaskCreatePinnedToCore(
+      keepWifiAlive,
+      "keepWifiAlive",  // Task name
+      5000,             // Stack size (bytes)
+      NULL,             // Parameter
+      1,                // Task priority
+      NULL,             // Task handle
+      ARDUINO_RUNNING_CORE
+    );
   } else { // when no wifi available
     WiFi.softAP("5g-tower", "typpalingur");
   }
@@ -1057,6 +1123,10 @@ unsigned long savedDataearlier = 0;
 unsigned long savedatainterval = (60*60*1000);
 
 void loop() {
+  if(WiFi.status() == WL_CONNECTED && !webServerStarted) {
+    server.begin();
+    webServerStarted = true;
+  }
   unsigned long curtime = millis();
   if (curtime - earlierloop > 2000) {
     temperatureLoop();
