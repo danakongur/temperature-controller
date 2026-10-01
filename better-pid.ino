@@ -39,8 +39,8 @@ Preferences savedSettings;
 
 WiFiMulti wifiMulti;
 const int networks = 1;
-const char* ssids[] = {"Vikurbakki18"};
-const char* passwords[] = {"Fletturimi35"};
+const char* ssids[] = {"iPhone3g","Dropping a 0-day at afterparty","Vikurbakki18"};
+const char* passwords[] = {"risa typpi", "kaka12346", "Fletturimi35"};
 
     /*WiFi.begin(ssids[0], passwords[0]);
 
@@ -63,6 +63,7 @@ void keepWifiAlive(void *parameter) {
     }
     digitalWrite(INTERNET_CONNECT_LED, LOW);
     Serial.println("[WIFI] Connecting");
+    WiFi.disconnect();
     WiFi.begin(ssids[0], passwords[0]);
 
     unsigned long startAttemptTime = millis();
@@ -84,7 +85,8 @@ void keepWifiAlive(void *parameter) {
 			continue;
     }
     digitalWrite(INTERNET_CONNECT_LED, HIGH);
-    Serial.println("[WIFI] Connected: " + WiFi.localIP());
+    Serial.print("[WIFI] Connected: ");
+    Serial.println(WiFi.localIP());
   }
 }
 
@@ -1105,7 +1107,7 @@ void setup() {
     xTaskCreatePinnedToCore(
       keepWifiAlive,
       "keepWifiAlive",  // Task name
-      5000,             // Stack size (bytes)
+      8192,             // Stack size (bytes)
       NULL,             // Parameter
       1,                // Task priority
       NULL,             // Task handle
