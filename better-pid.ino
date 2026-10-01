@@ -39,8 +39,8 @@ Preferences savedSettings;
 
 WiFiMulti wifiMulti;
 const int networks = 1;
-const char* ssids[] = {"iPhone3g","Dropping a 0-day at afterparty","Vikurbakki18"};
-const char* passwords[] = {"risa typpi", "kaka12346", "Fletturimi35"};
+const char* ssids[] = {"Vikurbakki18"};
+const char* passwords[] = {"Fletturimi35"};
 
     /*WiFi.begin(ssids[0], passwords[0]);
 
