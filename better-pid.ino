@@ -413,7 +413,11 @@ class System {
     if (previousTime == 0) {
       dt = 0;
     }
-    rawDerivative = (error - old_error)/(dt/1000.0);
+    if (dt != 0) {
+      rawDerivative = (error - old_error)/(dt/1000.0);
+    } else {
+      rawDerivative = 0;
+    }
 
     float Kd = 0;
     if (rawDerivative > 0) { // error rising, meaning temp is cooling
